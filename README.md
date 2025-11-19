@@ -196,3 +196,151 @@ Each step can contain:
 - `shell`: override shell type (`bash`/`powershell`).
 - `workdir`: working directory for the step’s commands.
 - `continue_on_error`: if `true`, keep going after a failing command.
+
+## Step Types
+
+```yaml
+- name: Write AWS config
+  write_file:
+    path: "~/.aws/config"
+    mode: "0600"
+    content: |
+      [default]
+      region = {{AWS_DEFAULT_REGION}}
+      output = {{AWS_DEFAULT_OUTPUT}}
+
+```
+- `path`: may contain `~` and interpolation.
+- `content`: written as-is (block scalar).
+- `mode`: octal string (e.g. `"0600"`).
+- `append: true`: appends instead of overwriting.
+
+
+## clone_repos
+```yaml
+- name: Clone repos (declarative)
+  clone_repos:
+    dest_unix: "{{WORKSPACE_ROOT}}"
+    dest_windows: "{{WORKSPACE_ROOT_WIN}}"
+    default_org: "{{DEFAULT_ORG}}"
+    repos:
+      - name: "SampleRepo"     # -> https://github.com/my-org/SampleRepo.git
+        post_install:
+          - argv: ["bash", "-lc", "if [ -f package.json ]; then npm ci; fi"]
+          - "bash -lc 'if [ -f pyproject.toml ]; then pip install -e .; fi'"
+
+      - name: "k8s-infra"
+        post_install:
+          - argv: ["bash", "-lc", "echo repo k8s-infra cloned"]
+
+      - url: "https://github.com/someone/special-repo.git"
+        # name absent -> derived from URL (special-repo)
+
+```
+
+URL resolution order:
+1. repo.url if present.
+2. https://github.com/{repo.org or default_org}/{repo.name}.git
+3. If name contains / and no org/default_org, treat as org/name. post_install items are executed in each repo directory, using the same rules as run:
+  - `{"argv": [...]}` -> executed as argv (no shell).
+  - string -> executed via shell (`bash`/`powershell`).
+
+`run`
+Two forms:
+- `argv` (preferred): safe, no shell parsing.
+ 
+```yaml
+run:
+  - argv: ["echo", "hi-{{SESSION_NAME}}"]
+```
+- shell string: executed via `/bin/bash -lc` on Unix, `powershell` on Windows.
+
+```yaml
+run:
+  - "echo shell-{{SESSION_NAME}}"
+```
+
+## Conditional Execution: `when`
+The `when` field supports very simple expressions of the form
+- `KEY==value`
+- `KEY!=value`
+
+The key is looked up in the interpolation context (inputs + env + `OS`).
+
+Excample from the provided spec:
+```yaml
+
+- name: Create workspace root (linux)
+  when: "OS!=windows"
+  run:
+    - mkdir -p "{{WORKSPACE_ROOT}}"
+
+- name: Create workspace root (windows)
+  when: "OS==windows"
+  shell: powershell
+  run:
+    - New-Item -ItemType Directory -Force -Path "{{WORKSPACE_ROOT_WIN}}" | Out-Null
+```
+
+If the condition is false, the step is silently skipped (no banner printed).
+
+---
+
+## Workspace Root Safety Guard
+
+If your spec defines:
+- WORKSPACE_ROOT (Unix-like) or
+- WORKSPACE_ROOT_WIN (Windows)
+
+the runner checks whether that directory already exists before doing anything else.
+
+If it exists, the run aborts with a message like:
+
+```text
+
+Workspace root already exists at /home/you/dev/workspace. Aborting to avoid clobbering an existing directory.
+```
+
+Exit code: `1`.
+
+This prevents accidentally "re-bootstrapping" into an existing workspace and potentially clobbering things.
+
+To proceed, either:
+- Remove/rename the directory, or
+- Change `WORKSPACE_ROOT`/`WORKSPACE_ROOT_WIN` in your spec.
+
+
+## Environment Variables
+
+Reserved knobs:
+
+- FORGE_OS: overrides OS detection (useful for testing or forcing behavior).
+  - Values: "windows", "ubuntu", "fedora", "arch".
+- `FORGE_HOME`: overrides `HOME` and `USERPROFILE` for this process.
+  - Useful in tests to contain all writes under a temp dir.
+
+All other environment variables referenced in the spec are just normal env passes.
+
+---
+
+## Testing
+
+Assuming you have `pytest` installed
+
+```bash
+
+# (from the repo root)
+pytest
+```
+
+The tests exercise:
+- Interpolation of `inputs` + `env`, including overrides via `--set`.
+- `when: "OS!=windows"` / `when: "OS==windows"`.
+- Shell selection (`bash` vs `powershell`).
+- `write_file` path/content/append/mode behavior.
+- `clone_repos` URL resolution and `post_install` hooks.
+- `run` parsing for `argv` and shell items.
+- `FORGE_OS` override behavior.
+- Step ordering (`common` before `os.<oskey>`).
+- Workspace guard for `WORKSPACE_ROOT` / `WORKSPACE_ROOT_WIN`.
+- Multistep simulation test
