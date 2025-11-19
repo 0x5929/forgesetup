@@ -1,0 +1,155 @@
+# spec.example.yaml - example with clone_repos.repos (no 'list' key) and default_org support.
+
+inputs:
+  SESSION_NAME: "AWS Session"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_DEFAULT_OUTPUT: "json"
+  AWS_SSO_ACCOUNT_ID: "xxxxxxxxxxxx"
+  AWS_SSO_ROLE_NAME: "local-cluster-role-secret"
+  AWS_PROFILE_REGION: "us-east-1"
+  AWS_SSO_START_URL: "https://yourawsloginurl/start"
+  AWS_SSO_REGION: "us-west-1"
+  AWS_SSO_REG_SCOPES: "sso:account:access"
+  AWS_SSO_DURATION: "0"
+  WORKSPACE_ROOT: "~/dev/workspace"
+  WORKSPACE_ROOT_WIN: "C:\\dev\\workspace"
+  NPM_TOKEN: ""
+  # Optional default org used to construct GitHub urls when repo.url not provided
+  DEFAULT_ORG: "my-org"
+
+env:
+  NPM_TOKEN: "{{NPM_TOKEN}}"
+
+common:
+  steps:
+    - name: Create workspace root (linux)
+      when: "OS!=windows"
+      run:
+        - mkdir -p "{{WORKSPACE_ROOT}}"
+      env:
+        # expose a simple OS var for interpolation if needed
+        OS: "linux"
+
+    - name: Create workspace root (windows)
+      when: "OS==windows"
+      shell: powershell
+      run:
+        - New-Item -ItemType Directory -Force -Path "{{WORKSPACE_ROOT_WIN}}" | Out-Null
+
+    - name: Write AWS config
+      write_file:
+        path: "~/.aws/config"
+        mode: "0600"
+        content: |
+          [default]
+          region = {{AWS_DEFAULT_REGION}}
+          output = {{AWS_DEFAULT_OUTPUT}}
+          [profile {{SESSION_NAME}}]
+          sso_session = {{SESSION_NAME}}
+          sso_account_id = {{AWS_SSO_ACCOUNT_ID}}
+          sso_role_name = {{AWS_SSO_ROLE_NAME}}
+          region = {{AWS_PROFILE_REGION}}
+          output = {{AWS_DEFAULT_OUTPUT}}
+          [sso-session {{SESSION_NAME}}]
+          sso_start_url = {{AWS_SSO_START_URL}}
+          sso_region = {{AWS_SSO_REGION}}
+          sso_registration_scopes = {{AWS_SSO_REG_SCOPES}}
+          duration_seconds = {{AWS_SSO_DURATION}}
+
+    - name: Clone repos (declarative)
+      clone_repos:
+        dest_unix: "{{WORKSPACE_ROOT}}"
+        dest_windows: "{{WORKSPACE_ROOT_WIN}}"
+        default_org: "{{DEFAULT_ORG}}"
+        repos:
+          - name: "SampleRepo"                     # will resolve to https://github.com/my-org/SampleRepo.git
+            # optional per-repo override:
+            # org: "another-org"
+            # url: "https://github.com/explicit-org/custom.git"
+            post_install:
+              - argv: ["bash", "-lc", "if [ -f package.json ]; then npm ci; fi"]
+              - "bash -lc 'if [ -f pyproject.toml ]; then pip install -e .; fi'"
+
+          - name: "k8s-infra"
+            post_install:
+              - argv: ["bash", "-lc", "echo repo k8s-infra cloned"]
+
+          - url: "https://github.com/someone/special-repo.git"
+            # name absent -> resolved from URL (special-repo)
+
+    - name: Final hint
+      run:
+        - echo "[EXAMPLE] NEXT: python init_aws_session.py {{SESSION_NAME}}"
+      when: "OS!=windows"
+
+    - name: Final hint (Windows)
+      shell: powershell
+      run:
+        - echo "[EXAMPLE] NEXT: python init_aws_session.py {{SESSION_NAME}}"
+      when: "OS==windows"
+
+# OS-specific steps stay unchanged below — example for ubuntu shown
+os:
+  ubuntu:
+    steps:
+      - name: Update apt
+        run:
+          - sudo apt-get update -y
+
+      - name: Install base deps
+        run:
+          - sudo apt-get install -y git curl unzip apt-transport-https ca-certificates gnupg lsb-release
+
+      - name: Install Docker (convenience script)
+        run:
+          - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+          - sudo sh /tmp/get-docker.sh
+          - sudo usermod -aG docker $USER || true
+          - sudo systemctl enable --now docker || true
+
+      - name: Install minikube
+        run:
+          - ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')
+          - curl -Lo /tmp/minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-${ARCH}
+          - sudo install /tmp/minikube /usr/local/bin/minikube
+
+      - name: Start minikube
+        run:
+          - minikube start --driver=docker
+
+  windows:
+    steps:
+      - name: Install Scoop (best effort)
+        shell: powershell
+        continue_on_error: true
+        run:
+          - iwr -useb get.scoop.sh | iex
+
+      - name: Add buckets
+        shell: powershell
+        run:
+          - scoop bucket add main
+          - scoop bucket add extras
+          - scoop bucket add tilt-dev https://github.com/tilt-dev/scoop-bucket
+
+      - name: Install core tools
+        shell: powershell
+        run:
+          - scoop install git
+          - scoop install docker docker-desktop
+          - scoop install minikube
+          - scoop install helm
+          - scoop install tilt-dev/tilt
+          - scoop install kubectl
+          - scoop install aws
+
+      - name: Start Docker Desktop
+        shell: powershell
+        continue_on_error: true
+        run:
+          - Start-Process "Docker Desktop"
+
+      - name: Start minikube (docker driver)
+        shell: powershell
+        run:
+          - minikube start --driver=docker
