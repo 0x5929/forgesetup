@@ -1,0 +1,27 @@
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "forgesetup"
+version = "0.0.1"
+description = "Declarative, OS-aware local dev bootstrap runner."
+authors = ["0x5929 <dev.kevin.ren@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/0x5929/forgesetup"
+repository = "https://github.com/0x5929/forgesetup"
+keywords = ["bootstrap", "dev", "developer-setup", "yaml"]
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+pyyaml = ">=6.0"
+distro = ">=1.8.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+black = ">=24.0.0"
+pylint = "^3.3.4"
+
+[tool.poetry.scripts]
+forgesetup = "forgesetup:main"

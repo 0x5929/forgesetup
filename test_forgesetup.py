@@ -580,3 +580,116 @@ def test_default_spec_path_derived_from_os(monkeypatch):
     assert str(p).endswith("AppData\\Roaming\\forgesetup\\spec.yaml")
 
 
+
+# ---------------------------------------------------------------------------
+# 13. Multi-step end-to-end flow (Unix)
+# ---------------------------------------------------------------------------
+
+def test_multistep_flow_unix(tmp_path, monkeypatch):
+    """
+    End-to-end: multiple steps mixing run + write_file on a Unix-like OS.
+    Ensures all steps run and side effects happen in order.
+    """
+    monkeypatch.setenv("FORGE_OS", "ubuntu")
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+
+    spec_text = """
+inputs:
+  WORKSPACE_ROOT: "~/workspace"
+
+common:
+  steps:
+    - name: Step 1 - echo
+      run:
+        - "echo step1"
+    - name: Step 2 - write file
+      write_file:
+        path: "{{WORKSPACE_ROOT}}/marker.txt"
+        content: "ok"
+
+os:
+  ubuntu:
+    steps:
+      - name: Step 3 - ubuntu specific
+        run:
+          - "echo step3-ubuntu"
+"""
+
+    spec_path = _make_spec(tmp_path, spec_text)
+
+    executed = []
+
+    def fake_shell(cmd, shell_kind, cwd, env):
+        executed.append((cmd, shell_kind))
+        class R:
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(run_steps, "run_process_shell", fake_shell)
+
+    run_steps.run_spec(spec_path, dry_run=False, overrides_list=None)
+
+    # Two shell commands (step1 + ubuntu-specific step)
+    assert executed == [("echo step1", "bash"), ("echo step3-ubuntu", "bash")]
+
+    # File from step 2 created under FORGE_HOME
+    marker = tmp_path / "workspace" / "marker.txt"
+    assert marker.exists()
+    assert marker.read_text(encoding="utf-8") == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 14. Multi-step end-to-end flow (Windows)
+# ---------------------------------------------------------------------------
+
+def test_multistep_flow_windows(tmp_path, monkeypatch):
+    """
+    End-to-end: multiple steps mixing run + write_file on Windows.
+    Mirrors the Unix flow but exercises the Windows path + shell.
+    """
+    monkeypatch.setenv("FORGE_OS", "windows")
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+
+    spec_text = """
+inputs:
+  WORKSPACE_ROOT_WIN: "~/workspace_win"
+
+common:
+  steps:
+    - name: Step 1 - echo
+      run:
+        - "echo step1"
+    - name: Step 2 - write file
+      write_file:
+        path: "{{WORKSPACE_ROOT_WIN}}/marker.txt"
+        content: "ok"
+
+os:
+  windows:
+    steps:
+      - name: Step 3 - windows specific
+        run:
+          - "echo step3-windows"
+"""
+
+    spec_path = _make_spec(tmp_path, spec_text)
+
+    executed = []
+
+    def fake_shell(cmd, shell_kind, cwd, env):
+        executed.append((cmd, shell_kind))
+        class R:
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(run_steps, "run_process_shell", fake_shell)
+
+    run_steps.run_spec(spec_path, dry_run=False, overrides_list=None)
+
+    # Two shell commands (step1 + windows-specific step)
+    assert executed == [("echo step1", "powershell"), ("echo step3-windows", "powershell")]
+
+    # File from step 2 created under FORGE_HOME
+    marker = tmp_path / "workspace_win" / "marker.txt"
+    assert marker.exists()
+    assert marker.read_text(encoding="utf-8") == "ok"
