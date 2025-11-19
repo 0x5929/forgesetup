@@ -574,7 +574,7 @@ def main() -> None:
         help=(
             "YAML spec file path. If omitted, the default is:\n"
             "  Unix:   ~/.config/forgesetup/spec.yaml\n"
-            "  Windows:%APPDATA%\\forgesetup\\spec.yaml"
+            "  Windows:%%APPDATA%%\\forgesetup\\spec.yaml"
         ),
     )
     p.add_argument("--dry-run", action="store_true", help="Print steps instead of running")
