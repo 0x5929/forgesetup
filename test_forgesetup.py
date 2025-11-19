@@ -496,3 +496,87 @@ os:
         "echo ubuntu1",
         "echo ubuntu2",
     ]
+
+# ---------------------------------------------------------------------------
+# 11. Workspace root guard (Unix + Windows)
+# ---------------------------------------------------------------------------
+
+def test_workspace_root_guard_unix(tmp_path, monkeypatch, capsys):
+    """
+    If WORKSPACE_ROOT is defined and the directory already exists,
+    run_spec should abort before running any steps.
+    """
+    monkeypatch.setenv("FORGE_OS", "ubuntu")
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+
+    # Create the workspace dir in advance.
+    ws_dir = tmp_path / "dev" / "workspace"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    spec_text = """
+inputs:
+  WORKSPACE_ROOT: "~/dev/workspace"
+
+common:
+  steps:
+    - name: Dummy step
+      run:
+        - "echo should-not-run"
+"""
+
+    spec_path = _make_spec(tmp_path, spec_text)
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_steps.run_spec(spec_path, dry_run=False, overrides_list=None)
+
+    out = capsys.readouterr().out
+    # Guard should fire, so no step banners and we get a message
+    assert "should-not-run" not in out
+    assert "Workspace root already exists" in out
+    assert excinfo.value.code == 1
+
+
+def test_workspace_root_guard_windows(tmp_path, monkeypatch, capsys):
+    """
+    If WORKSPACE_ROOT_WIN is defined and directory exists, guard should trigger.
+    """
+    monkeypatch.setenv("FORGE_OS", "windows")
+    monkeypatch.setenv("FORGE_HOME", str(tmp_path))
+
+    ws_dir = tmp_path / "dev" / "workspace_win"
+    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    spec_text = """
+inputs:
+  WORKSPACE_ROOT_WIN: "~/dev/workspace_win"
+
+common:
+  steps:
+    - name: Dummy step
+      when: "OS==windows"
+      run:
+        - "echo should-not-run"
+"""
+
+    spec_path = _make_spec(tmp_path, spec_text)
+
+    with pytest.raises(SystemExit):
+        run_steps.run_spec(spec_path, dry_run=False, overrides_list=None)
+
+    out = capsys.readouterr().out
+    assert "Workspace root already exists" in out
+    assert "should-not-run" not in out
+
+
+# ---------------------------------------------------------------------------
+# 12. Default spec path
+# ---------------------------------------------------------------------------
+def test_default_spec_path_derived_from_os(monkeypatch):
+    # unix-like
+    assert str(run_steps._default_spec_path("ubuntu")).endswith(".config/forgesetup/spec.yaml")
+    # windows
+    monkeypatch.setenv("APPDATA", "C:\\Users\\Test\\AppData\\Roaming")
+    p = run_steps._default_spec_path("windows")
+    assert str(p).endswith("AppData\\Roaming\\forgesetup\\spec.yaml")
+
+

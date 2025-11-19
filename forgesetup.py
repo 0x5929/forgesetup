@@ -33,9 +33,14 @@ Security / Threat Model
 
 Usage
 -----
-  python run_steps.py spec.yaml
-  python run_steps.py spec.yaml --dry-run
-  python run_steps.py spec.yaml --set SESSION_NAME=my-session --set NPM_TOKEN=xxx
+  # Explicit spec path
+  python forgesetup.py path/to/spec.yaml
+  python forgesetup.py path/to/spec.yaml --dry-run
+  python forgesetup.py path/to/spec.yaml --set SESSION_NAME=my-session --set NPM_TOKEN=xxx
+
+  # Default spec locations (when no spec argument is given):
+  #   - Unix-like:   ~/.config/forgesetup/spec.yaml
+  #   - Windows:     %APPDATA%\\forgesetup\\spec.yaml
 
 Spec features used in this runner
 --------------------------------
@@ -66,7 +71,7 @@ import platform
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional
 
 try:
@@ -74,6 +79,30 @@ try:
 except Exception:  # noqa
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pyyaml"])
     import yaml  # type: ignore
+
+
+# -------------------------
+# Default spec locations
+# -------------------------
+
+def _default_spec_path(os_key: str) -> Path:
+    """
+    Return the conventional location for the spec file for a given OS key.
+
+    This helper is used by tests and is also the recommended location for
+    storing your spec file. The CLI still requires an explicit spec path.
+
+    * unix-like:  ~/.config/forgesetup/spec.yaml
+    * windows:    %APPDATA%\\forgesetup\\spec.yaml
+    """
+    if os_key == "windows":
+        appdata = os.environ.get("APPDATA") or r"C:\Users\Public\AppData\Roaming"
+        win_path = PureWindowsPath(appdata) / "forgesetup" / "spec.yaml"
+        return Path(str(win_path))
+    else:
+        home = Path(os.environ.get("HOME", "~")).expanduser()
+        return home / ".config" / "forgesetup" / "spec.yaml"
+
 
 
 # -------------------------
@@ -89,7 +118,7 @@ def run_process_shell(
     Run a shell command via platform shell.
 
     On Windows: PowerShell.
-    On Linux: /bin/bash -lc.
+    On Linux/Unix: /bin/bash -lc.
     """
     if shell_kind == "powershell":
         full = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd]
@@ -165,7 +194,7 @@ EXEC_HOOK = {
 # -------------------------
 VAR_PATTERNS = [
     (re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}"), 1),  # noqa {{VAR}}
-    (re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}"), 1),         # noqa ${VAR}
+    (re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}"), 1),         # noqa  ${VAR}
 ]
 
 
@@ -294,6 +323,67 @@ def merge_envs(*maps: Optional[Dict[str, Any]]) -> Dict[str, str]:
             out[str(k)] = str(v)
     return out
 
+# def _guard_workspace_root(effective_inputs: Dict[str, Any], os_key: str) -> None:
+#     """
+#     Best-effort safety check:
+#
+#     If WORKSPACE_ROOT (unix) or WORKSPACE_ROOT_WIN (windows) is defined and
+#     the directory already exists, abort before running any steps.
+#
+#     This is meant to prevent accidentally re-cloning or re-initialising an
+#     existing workspace directory.
+#     """
+#     key = "WORKSPACE_ROOT_WIN" if os_key == "windows" else "WORKSPACE_ROOT"
+#     raw = effective_inputs.get(key)
+#     if not raw:
+#         return
+#
+#     # Interpolate using a minimal context so {{...}} / ${...} are usable.
+#     minimal_ctx: Dict[str, Any] = {**effective_inputs, "OS": os_key, **os.environ}
+#     expanded = interpolate_string(str(raw), minimal_ctx)
+#
+#     if os_key == "windows":
+#         # On real Windows, treat the value as-is.
+#         if os.name == "nt":
+#             ws_path = Path(expanded)
+#         else:
+#             # In tests (FORGE_OS=windows on non-Windows), interpret the path
+#             # relative to HOME/FORGE_HOME so we can assert behavior deterministically.
+#             home = Path(os.environ.get("HOME", "~")).expanduser()
+#             # Strip optional drive prefix like 'C:\'
+#             stripped = re.sub(r"^[A-Za-z]:[\\/]", "", expanded)
+#             ws_path = home / stripped.replace("\\", "/")
+#     else:
+#         ws_path = Path(expanded).expanduser()
+#
+#     if ws_path.exists():
+#         print(
+#             f"Workspace root already exists at {ws_path}. "
+#             "Aborting to avoid clobbering an existing workspace."
+#         )
+#         raise SystemExit(1)
+
+def _derive_workspace_root(os_key: str, ctx: Dict[str, Any]) -> Optional[Path]:
+    """
+    Derive the workspace root directory from inputs/overrides.
+
+    * Non-Windows: WORKSPACE_ROOT
+    * Windows: WORKSPACE_ROOT_WIN, falling back to WORKSPACE_ROOT
+
+    Returns the expanded, absolute Path, or None if no relevant input is set.
+    """
+    if os_key == "windows":
+        root_val = ctx.get("WORKSPACE_ROOT_WIN") or ctx.get("WORKSPACE_ROOT")
+    else:
+        root_val = ctx.get("WORKSPACE_ROOT")
+
+    if not root_val:
+        return None
+
+    # HOME / USERPROFILE may be overridden by FORGE_HOME before this is called.
+    return Path(str(root_val)).expanduser().resolve()
+
+
 
 def run_spec(spec_path: Path, dry_run: bool = False, overrides_list: Optional[List[str]] = None) -> None:
     """
@@ -304,6 +394,14 @@ def run_spec(spec_path: Path, dry_run: bool = False, overrides_list: Optional[Li
     spec_path: Path to YAML spec.
     dry_run:   If True, print what would be done but don't execute commands.
     overrides_list: list of "KEY=VALUE" command-line style overrides.
+
+    Notes
+    -----
+    * FORGE_OS: if set, overrides real OS detection (used heavily in tests).
+    * FORGE_HOME: if set, overrides HOME and USERPROFILE for path expansion.
+    * Workspace guard:
+        If inputs contain WORKSPACE_ROOT (Unix) or WORKSPACE_ROOT_WIN (Windows),
+        and that directory already exists, the runner aborts with a message.
     """
     if not spec_path.exists():
         raise SystemExit(f"spec file not found: {spec_path}")
@@ -323,8 +421,17 @@ def run_spec(spec_path: Path, dry_run: bool = False, overrides_list: Optional[Li
     # Build context used for interpolation (inputs + overrides)
     inputs = spec.get("inputs", {}) or {}
     overrides = parse_overrides(overrides_list or [])
-    ctx: Dict[str, Any] = {**inputs, **overrides}   # noqa
-    ctx["OS"] = os_key  # expose OS for 'when' clauses
+    effective_inputs: Dict[str, Any] = {**inputs, **overrides}  # noqa
+    ctx: Dict[str, Any] = dict(effective_inputs)
+    ctx["OS"] = os_key
+
+    # Workspace-root guard: if a workspace root is configured and already exists,
+    # abort before running any steps. This is primarily to avoid re-running
+    # "bootstrap" specs that expect to create an empty workspace.
+    ws_root = _derive_workspace_root(os_key, ctx)
+    if ws_root is not None and ws_root.exists():
+        print(f"[guard] Workspace root already exists at {ws_root}. Aborting.")
+        raise SystemExit(1)
 
     # Global env resolution: process env, spec.env, os-specific env
     proc_env = dict(os.environ)
@@ -458,11 +565,18 @@ def run_spec(spec_path: Path, dry_run: bool = False, overrides_list: Optional[Li
     print("\nAll steps complete.")
 
 
-
 def main() -> None:
     """CLI entrypoint."""
     p = argparse.ArgumentParser(description="Declarative OS-aware bootstrap runner")
-    p.add_argument("spec", help="YAML spec file path")
+    p.add_argument(
+        "spec",
+        nargs="?",
+        help=(
+            "YAML spec file path. If omitted, the default is:\n"
+            "  Unix:   ~/.config/forgesetup/spec.yaml\n"
+            "  Windows:%APPDATA%\\forgesetup\\spec.yaml"
+        ),
+    )
     p.add_argument("--dry-run", action="store_true", help="Print steps instead of running")
     p.add_argument(
         "--set",
@@ -472,8 +586,22 @@ def main() -> None:
         help="Override input: --set KEY=VALUE (can be passed multiple times)",
     )
     args = p.parse_args()
-    run_spec(Path(args.spec), dry_run=args.dry_run, overrides_list=args.overrides)
+
+    # Determine OS early to compute default spec path if needed.
+    os_key = os.environ.get("FORGE_OS") or detect_os()
+    if args.spec:
+        spec_path = Path(args.spec)
+    else:
+        spec_path = _default_spec_path(os_key)
+        if not spec_path.exists():
+            raise SystemExit(
+                f"No spec path provided and default spec not found.\n"
+                f"Expected default at: {spec_path}"
+            )
+
+    run_spec(spec_path, dry_run=args.dry_run, overrides_list=args.overrides)
 
 
-if __name__ == "__main__":  # pragma: no cover - CLI wrapper
+# CLI wrapper
+if __name__ == "__main__":
     main()
