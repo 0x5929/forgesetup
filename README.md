@@ -18,79 +18,89 @@ It is intentionally thin and deterministic; the spec is the "brain".
 ## Requirements
 
 - **Python**: 3.10+ (tested on 3.13)
-- **Git**: required if you use `clone_repos`.
+- **Pipx**: 1.4.1+
+- **Git**: 2.0.0+; required if you use `clone_repos`.
 - The script will auto-install:
   - [`PyYAML`](https://pyyaml.org/) for YAML parsing.
   - [`distro`](https://pypi.org/project/distro/) for Linux distro detection.
-
-No global installation of these libraries is required; the script will `pip install` them into your current interpreter environment if missing.
 
 ---
 
 ## Installation
 
-You can keep the script anywhere, but a common pattern is a `devops` folder.
+ForgeSetup is distributed as a normal Python package and is intended to be installed from the GitHub repo.
 
-### Unix (Linux/macOS)
+You can install it either with `pipx` (recommended for CLI tools) or with `pip` + a virtualenv.
+
+### Recommended: pipx
+
+First, ensure `pipx` is installed (most distros have a package or you can do `pip install --user pipx` and follow its PATH instructions).
+
+Then install ForgeSetup from GitHub:
 
 ```bash
-# 1) Create a devops folder and clone
-mkdir -p ~/devops
-cd ~/devops
-git clone https://github.com/your-org/forgesetup.git
-cd forgesetup
+pipx install "git+https://github.com/0x5929/forgesetup.git@version"
 
-# 2) (Recommended) Create a virtualenv
-python -m venv .venv
-source .venv/bin/activate
+# install a tagged release
+pipx install "git+https://github.com/0x5929/forgesetup.git@v0.0.1"
 
-# 3) Install dependencies (optional; script can lazy-install, but this is cleaner)
-pip install -r requirements.txt
+# install the latest from develop
+pipx install "git+https://github.com/0x5929/forgesetup.git@develop"
 
-# 4) Make the entrypoint executable and symlink it into ~/.local/bin
-chmod +x forgesetup.py
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/forgesetup.py" ~/.local/bin/forgesetup
+# after installing:
+forgesetup --help
+forgesetup <spec-file-path>
 
-# 5) Ensure ~/.local/bin is on your PATH (bash/fish/zsh)
-# bash example:
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+# Uninstallation
+# & You can then reinstall a specific version or branch when needed:
+pipx uninstall forgesetup
 
-forgesetup path/to/spec.yaml
-# or rely on the default config location (see below)
-forgesetup
+# reinstall latest dev branch
+pipx install "git+https://github.com/0x5929/forgesetup.git@develop"
 ```
 
-### Windows (powershell)
+### Alternative: pip + virtualenv
+If you prefer to manage your own virtualenv instead of pipx:
+
+```bash
+
+# Unix-like
+python -m venv ~/.venvs/forgesetup
+source ~/.venvs/forgesetup/bin/activate
+
+pip install "git+https://github.com/0x5929/forgesetup.git@v0.0.1"
+
+forgesetup --help
+forgesetup ~/.config/forgesetup/spec.yaml
+```
+
 ```powershell
 
-# 1) Create a devops folder and clone
-New-Item -ItemType Directory -Force -Path "C:\devops" | Out-Null
-Set-Location C:\devops
-git clone https://github.com/your-org/forgesetup.git
-Set-Location .\forgesetup
+# Windows (PowerShell)
+py -m venv "$env:USERPROFILE\venvs\forgesetup"
+& "$env:USERPROFILE\venvs\forgesetup\Scripts\Activate.ps1"
 
-# 2) Create a virtualenv
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
+pip install "git+https://github.com/0x5929/forgesetup.git@v0.0.1"
 
-# 3) Install dependencies (optional but recommended)
-pip install -r requirements.txt
-
-# Create a small wrapper on your PATH, e.g. in a folder like C:\Users\<you>\bin
-# which you add to the PATH via System Settings:
-# NOTE: this path can also be used for your own installed software executions, instead of polutting system
-:: forgesetup.cmd
-@echo off
-python "C:\devops\forgesetup\forgesetup.py" %*
-
-# Add that directory to PATH, and now:
-
-forgesetup path\to\spec.yaml
-# or just:
-forgesetup
+forgesetup --help
+forgesetup "$env:APPDATA\forgesetup\spec.yaml"
 ```
+
+When you install into a virtualenv, the `forgesetup` command is only on PATH while that virtualenv is activated.
+To use it later, open a new shell, activate the env again, and run `forgesetup`.
+
+#### Uninstall with pip + virtualenv
+```bash
+
+# To uninstall
+deactivate
+rm -rf ~/.venvs/forgesetup
+
+# If you prefer to keep the virtualenv and just remove the package
+source ~/.venvs/forgesetup/bin/activate   #  # Windows: Activate.ps1
+pip uninstall forgesetup
+```
+
 
 ### Spec File and Default Locations
 
@@ -127,6 +137,7 @@ You can always override the location explicitly:
 forgesetup ./my-custom-spec.yaml
 ```
 
+---
 
 ## Spec Structure
 

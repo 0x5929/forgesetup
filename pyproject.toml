@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "forgesetup"
-version = "0.0.2"
+version = "0.0.3"
 description = "Declarative, OS-aware local dev bootstrap runner."
 authors = ["0x5929 <dev.kevin.ren@gmail.com>"]
 license = "MIT"
